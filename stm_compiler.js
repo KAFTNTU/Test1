@@ -292,7 +292,8 @@ class Compiler {
             }
             case 'wait_until_sensor': {
                 /* Компілюємо як: while NOT(cond) { loop } */
-                const sens  = parseInt(block.getFieldValue('SENS') || '1') - 1; /* ВИПРАВЛЕНО: 0-індекс */
+                /* SENS dropdown stores 0..3 for the displayed ports 1..4. */
+                const sens  = Math.max(0, Math.min(3, parseInt(block.getFieldValue('SENS') || '0', 10) || 0));
                 const opStr = block.getFieldValue('OP') || 'LT';
                 const val   = this.staticNum(block.getInputTargetBlock('VAL'), 50);
 

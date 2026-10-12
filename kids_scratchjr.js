@@ -14,25 +14,28 @@
     back:        {category:'move', shape:'blue', ico:'back', title:'Їхати назад', param:2, suffix:'с'},
     left:        {category:'move', shape:'blue', ico:'left', title:'Повернути ліворуч', param:90, suffix:'°'},
     right:       {category:'move', shape:'blue', ico:'right', title:'Повернути праворуч', param:90, suffix:'°'},
-    uturn:       {category:'move', shape:'blue', ico:'uturn', title:'Розвернутися'},
+    uturn_left:  {category:'move', shape:'blue', ico:'uturn-left', title:'Розвернутися ліворуч на 180°', badge:'180°'},
+    uturn_right: {category:'move', shape:'blue', ico:'uturn', title:'Розвернутися праворуч на 180°', badge:'180°'},
     slow:        {category:'move', shape:'blue', ico:'slow', title:'Повільна швидкість'},
     fast:        {category:'move', shape:'blue', ico:'fast', title:'Швидка швидкість'},
     drive_time:  {category:'move', shape:'blue', ico:'drivetime', title:'Їхати протягом часу', param:2, suffix:'с'},
     motor_stop:  {category:'move', shape:'blue', ico:'stopb', title:'Зупинити мотори'},
-    sensor_wait: {category:'sensor', shape:'orange', ico:'senseobst', title:'Чекати, поки датчик 1 покаже більше за число', param:50, suffix:''},
+    wall_distance:{category:'sensor', shape:'orange', ico:'senseobst', title:'Стіна: чекати, поки відстань стане меншою', param:20, sensorPort:1, suffix:''},
+    line_color:  {category:'sensor', shape:'orange', ico:'senseline', title:'Лінія: чекати чорну або білу поверхню', param:'black', sensorPort:2, suffix:''},
     wait:        {category:'actions', shape:'green', ico:'wait', title:'Почекати', param:1, suffix:'с'},
     smile:       {category:'actions', shape:'green', ico:'smile', title:'Показати смайлик'},
-    say:         {category:'actions', shape:'green', ico:'say', title:'Показати текст на екрані', param:'HI', suffix:''},
+    say:         {category:'actions', shape:'green', ico:'say', title:'Показати текст по центру екрана', param:'HI', suffix:''},
     clear:       {category:'actions', shape:'green', ico:'clear', title:'Очистити екран'},
     repeat:      {category:'repeat', shape:'purple', ico:'repeat', title:'Повторити вкладені блоки', param:3, suffix:'', container:true},
+    forever:     {category:'repeat', shape:'purple', ico:'forever', title:'Повторювати завжди', badge:'∞', container:true},
     end:         {category:'end', shape:'end', ico:'stop', title:'Кінець програми'}
   };
   const categories = [
     {id:'start', icon:'🏁', label:'Старт', color:'#f7c600', blocks:['start']},
-    {id:'move', icon:'➡️', label:'Рух', color:'#298cee', blocks:['forward','back','left','right','uturn','slow','fast','drive_time','motor_stop']},
-    {id:'sensor', icon:'👀', label:'Датчик', color:'#f38d1b', blocks:['sensor_wait']},
+    {id:'move', icon:'➡️', label:'Рух', color:'#298cee', blocks:['forward','back','left','right','uturn_left','uturn_right','slow','fast','drive_time','motor_stop']},
+    {id:'sensor', icon:'👀', label:'Датчик', color:'#f38d1b', blocks:['wall_distance','line_color']},
     {id:'actions', icon:'🙂', label:'Дії', color:'#46bb42', blocks:['wait','smile','say','clear']},
-    {id:'repeat', icon:'🔁', label:'Цикл', color:'#9d4edd', blocks:['repeat']},
+    {id:'repeat', icon:'🔁', label:'Цикл', color:'#9d4edd', blocks:['repeat','forever']},
     {id:'end', icon:'🛑', label:'Кінець', color:'#e83a3a', blocks:['end']}
   ];
 
@@ -66,6 +69,15 @@
       else viewPan = {x:(1 - kidsZoom) * programPosition.x, y:(1 - kidsZoom) * programPosition.y};
     } catch (_) {}
   }
+  function normalizeNodes(nodes) {
+    nodes.forEach(node => {
+      if (node.type === 'uturn') node.type = 'uturn_left';
+      if (node.type === 'sensor_wait') node.type = 'wall_distance';
+      if (Array.isArray(node.children)) normalizeNodes(node.children);
+    });
+  }
+  normalizeNodes(program);
+  normalizeNodes(floatingBlocks);
   let activeLoopId = null;
   let activeCategory = 'move';
   let kidsMode = false;
@@ -140,6 +152,7 @@
     const def = defs[type];
     const node = {id:newId(), type};
     if (def.param !== undefined) node.param = def.param;
+    if (def.sensorPort) node.sensorPort = def.sensorPort;
     if (def.container) node.children = [];
     return node;
   }
@@ -172,6 +185,7 @@
     event.stopPropagation();
     const def = defs[node.type];
     if (!def || def.param === undefined) return;
+    if (def.sensorPort) { editSensor(node); return; }
     const input = prompt(def.title + '\nНове значення:', node.param ?? def.param);
     if (input === null) return;
     const value = input.trim();
@@ -186,13 +200,73 @@
     renderSequence();
   }
 
+  function editSensor(node) {
+    const def = defs[node.type];
+    const dialog = document.createElement('dialog');
+    dialog.className = 'kids-sensor-dialog';
+    const form = document.createElement('form');
+    const heading = document.createElement('h3');
+    heading.textContent = node.type === 'wall_distance' ? '🧱 Стіна' : '〰 Лінія';
+    function field(caption, input) {
+      const label = document.createElement('label');
+      const text = document.createElement('span');
+      text.textContent = caption;
+      label.append(text, input);
+      return label;
+    }
+    const port = document.createElement('select');
+    for (let number = 1; number <= 4; number++) port.add(new Option('Датчик ' + number, String(number)));
+    port.value = String(node.sensorPort ?? def.sensorPort);
+    let value;
+    if (node.type === 'line_color') {
+      value = document.createElement('select');
+      value.add(new Option('⚫ Чорна', 'black'));
+      value.add(new Option('⚪ Біла', 'white'));
+      value.value = node.param ?? def.param;
+    } else {
+      value = document.createElement('input');
+      Object.assign(value, {type:'number', min:'0', max:'999', step:'any', required:true, inputMode:'decimal', value:String(node.param ?? def.param)});
+    }
+    const hint = document.createElement('p');
+    hint.textContent = node.type === 'wall_distance' ? 'Продовжити програму, коли стіна ближче за цю відстань.' : 'Продовжити програму, коли датчик побачить цей колір.';
+    const actions = document.createElement('div');
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = 'Скасувати';
+    cancel.addEventListener('click', () => dialog.close());
+    const apply = document.createElement('button');
+    apply.type = 'submit';
+    apply.textContent = 'Готово';
+    actions.append(cancel, apply);
+    form.append(heading, field(node.type === 'wall_distance' ? 'Відстань до стіни' : 'Колір лінії', value), field('Порт датчика', port), hint, actions);
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      node.sensorPort = Number(port.value);
+      node.param = node.type === 'line_color' ? value.value : Number(value.value);
+      save();
+      renderSequence();
+      dialog.close();
+    });
+    dialog.appendChild(form);
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.appendChild(dialog);
+    dialog.showModal();
+  }
+
   function makeChip(node) {
     const def = defs[node.type];
-    if (def.param === undefined) return null;
-    const chip = document.createElement('button');
+    if (def.param === undefined && !def.badge) return null;
+    const chip = document.createElement(def.badge ? 'span' : 'button');
     chip.className = 'kids-jr-param';
+    if (def.badge) {
+      chip.classList.add('kids-jr-badge');
+      chip.textContent = def.badge;
+      return chip;
+    }
     chip.type = 'button';
-    chip.textContent = String(node.param ?? def.param) + (def.suffix || '');
+    if (node.type === 'line_color') {
+      chip.textContent = (node.param ?? def.param) === 'white' ? '⚪ Біла' : '⚫ Чорна';
+    } else chip.textContent = String(node.param ?? def.param) + (def.suffix || '');
     chip.title = 'Натисни, щоб змінити значення';
     if (node.id) chip.addEventListener('click', event => editParam(node, event));
     else chip.addEventListener('click', event => event.stopPropagation());
@@ -201,7 +275,7 @@
 
   function makeIcon(name) {
     const icon = document.createElement('div');
-    icon.className = 'kids-jr-icon ico-' + name;
+    icon.className = 'kids-jr-icon ico-' + name + (name === 'uturn-left' ? ' ico-uturn' : '');
     return icon;
   }
 
@@ -225,7 +299,7 @@
 
   function dragInfo(element, node, palette, event) {
     const floatingChain = palette ? null : element.closest('.kids-floating-chain');
-    const dragWholeChain = floatingChain?.querySelectorAll(':scope > .kids-sequence-block').length > 1;
+    const dragWholeChain = element.parentElement === floatingChain && floatingChain?.querySelectorAll(':scope > .kids-sequence-block').length > 1;
     const source = dragWholeChain ? floatingChain : element;
     const rect = source.getBoundingClientRect();
     return {source, payload:{
@@ -246,14 +320,18 @@
       event.stopImmediatePropagation();
     }, true);
     element.addEventListener('pointerdown', event => {
-      if (!kidsMode || event.pointerType === 'mouse' || event.target.closest('button')) return;
+      if (!kidsMode || event.pointerType === 'mouse' || event.target.closest('button:not(.kids-jr-param)')) return;
+      event.stopPropagation();
       cancelTouchDrag?.();
       const {source, payload} = dragInfo(element, node, palette, event);
       const startX = event.clientX;
       const startY = event.clientY;
       const pointerId = event.pointerId;
+      const tray = palette ? byId('kidsPalette') : null;
+      const initialScroll = tray?.scrollLeft || 0;
       let ghost = null;
       let moving = false;
+      let scrolling = false;
       function cleanup() {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', finish);
@@ -263,10 +341,24 @@
         ghost?.remove();
         cancelTouchDrag = null;
       }
-      function cancel() { suppressClick = moving; cleanup(); }
+      function cancel(next) {
+        if (next?.pointerId !== undefined && next.pointerId !== pointerId) return;
+        suppressClick = moving || scrolling;
+        cleanup();
+      }
       function move(next) {
         if (next.pointerId !== pointerId) return;
-        if (!moving && Math.hypot(next.clientX - startX, next.clientY - startY) < 6) return;
+        const dx = next.clientX - startX;
+        const dy = next.clientY - startY;
+        if (!moving && Math.hypot(dx, dy) < 6) return;
+        if (!moving && tray && Math.abs(dy) < 12 && (scrolling || Math.abs(dx) > Math.max(10, Math.abs(dy) * 1.4))) {
+          scrolling = true;
+          next.preventDefault();
+          element.setPointerCapture(pointerId);
+          tray.scrollLeft = initialScroll - dx;
+          return;
+        }
+        if (!moving && tray && Math.abs(dy) < 12) return;
         if (!moving) {
           moving = true;
           element.setPointerCapture(pointerId);
@@ -291,7 +383,7 @@
       }
       function finish(next) {
         if (next.pointerId !== pointerId) return;
-        suppressClick = moving;
+        suppressClick = moving || scrolling;
         cleanup();
         if (!moving) return;
         next.preventDefault();
@@ -312,6 +404,7 @@
     attachTouchDrag(element, node, palette);
     let dragPayload;
     element.addEventListener('dragstart', event => {
+      if (cancelTouchDrag) { event.preventDefault(); return; }
       event.stopPropagation();
       completedDrag = false;
       dragPayload = dragInfo(element, node, palette, event).payload;
@@ -354,9 +447,9 @@
 
   function makeLoop(node) {
     const wrap = document.createElement('div');
-    wrap.className = 'kids-jr-loop kids-sequence-block' + (activeLoopId === node.id ? ' active-loop' : '');
+    wrap.className = 'kids-jr-loop kids-sequence-block' + (node.type === 'forever' ? ' kids-forever' : '') + (activeLoopId === node.id ? ' active-loop' : '');
     wrap.dataset.kidsId = node.id;
-    wrap.title = 'Натисни, щоб додавати блоки в цикл або вийти з нього';
+    wrap.title = defs[node.type].title + '. Натисни, щоб додавати блоки в цикл або вийти з нього';
     wrap.addEventListener('click', event => {
       event.stopPropagation();
       activeLoopId = activeLoopId === node.id ? findLocation(node.id)?.parentId || null : node.id;
@@ -381,7 +474,7 @@
     });
     const cap = document.createElement('div');
     cap.className = 'kids-jr-block kids-jr-loop-cap shape-cap';
-    cap.appendChild(makeIcon('repeat'));
+    cap.appendChild(makeIcon(defs[node.type].ico));
     const chip = makeChip(node);
     if (chip) cap.appendChild(chip);
     body.append(nest, cap);
@@ -391,7 +484,7 @@
   }
 
   function makeProgramBlock(node) {
-    return node.type === 'repeat' ? makeLoop(node) : makeSimple(node, false);
+    return defs[node.type]?.container ? makeLoop(node) : makeSimple(node, false);
   }
 
   function renderPalette() {
@@ -885,6 +978,31 @@
     });
   }
 
+  function attachPaletteScroll(palette) {
+    palette.addEventListener('pointerdown', event => {
+      if (!kidsMode || event.pointerType === 'mouse' || event.target.closest('.kids-jr-block, button')) return;
+      const pointerId = event.pointerId;
+      const startX = event.clientX;
+      const initialScroll = palette.scrollLeft;
+      palette.setPointerCapture(pointerId);
+      function move(next) {
+        if (next.pointerId !== pointerId) return;
+        next.preventDefault();
+        palette.scrollLeft = initialScroll - next.clientX + startX;
+      }
+      function finish(next) {
+        if (next.pointerId !== pointerId) return;
+        palette.removeEventListener('pointermove', move);
+        palette.removeEventListener('pointerup', finish);
+        palette.removeEventListener('pointercancel', finish);
+        if (palette.hasPointerCapture(pointerId)) palette.releasePointerCapture(pointerId);
+      }
+      palette.addEventListener('pointermove', move, {passive:false});
+      palette.addEventListener('pointerup', finish);
+      palette.addEventListener('pointercancel', finish);
+    });
+  }
+
   function xmlNumber(name, value) {
     const wrapper = document.createElement('value');
     wrapper.setAttribute('name', name);
@@ -919,27 +1037,27 @@
         block = xmlBlock('robot_move_soft');
         block.append(xmlNumber('TARGET', node.type === 'back' ? -60 : 60), xmlNumber('SEC', Number(value) || 1));
         break;
-      case 'left': case 'right': case 'uturn':
+      case 'left': case 'right': case 'uturn_left': case 'uturn_right':
         block = xmlBlock('robot_turn_timed');
-        block.append(xmlField('DIR', node.type === 'right' ? 'RIGHT' : 'LEFT'), xmlNumber('SEC', node.type === 'uturn' ? 1 : Math.max(.1, Number(value) / 180)));
+        block.append(xmlField('DIR', node.type === 'right' || node.type === 'uturn_right' ? 'RIGHT' : 'LEFT'), xmlNumber('SEC', node.type.startsWith('uturn_') ? 1 : Math.max(.1, Number(value) / 180)));
         break;
       case 'slow': case 'fast':
         block = xmlBlock('robot_set_speed'); block.append(xmlNumber('SPEED', node.type === 'slow' ? 30 : 80)); break;
       case 'motor_stop': case 'end': block = xmlBlock('robot_stop'); break;
-      case 'sensor_wait':
+      case 'wall_distance': case 'line_color':
         block = xmlBlock('wait_until_sensor');
-        block.append(xmlField('SENS', 1), xmlField('OP', 'GT'), xmlNumber('VAL', Number(value) || 50));
+        block.append(xmlField('SENS', (node.sensorPort ?? defs[node.type].sensorPort) - 1),
+          xmlField('OP', node.type === 'line_color' && value !== 'white' ? 'GT' : 'LT'),
+          xmlNumber('VAL', node.type === 'line_color' ? 50 : Number(value)));
         break;
       case 'wait': block = xmlBlock('wait_seconds'); block.append(xmlNumber('SECONDS', Number(value) || 1)); break;
       case 'smile': block = xmlBlock('disp_smile'); block.append(xmlField('FACE', 'happy')); break;
       case 'say':
-        block = xmlBlock('disp_text');
-        block.append(xmlField('TXT', String(value || 'HI')), xmlField('SIZE', 'small'), xmlNumber('X', 0), xmlNumber('Y', 0));
-        break;
+        return centeredTextBlocks(String(value ?? 'HI'));
       case 'clear': block = xmlBlock('disp_clear'); break;
-      case 'repeat':
-        block = xmlBlock('controls_repeat_ext');
-        block.append(xmlNumber('TIMES', Number(value) || 3));
+      case 'repeat': case 'forever':
+        block = xmlBlock(node.type === 'forever' ? 'loop_forever' : 'controls_repeat_ext');
+        if (node.type === 'repeat') block.append(xmlNumber('TIMES', Number(value) || 3));
         if (node.children?.length) {
           const statement = document.createElement('statement');
           statement.setAttribute('name', 'DO');
@@ -952,11 +1070,33 @@
     return node.type === 'smile' || node.type === 'say' || node.type === 'clear' ? [block, xmlBlock('disp_send')] : [block];
   }
 
+  function centeredTextBlocks(text) {
+    const lines = [];
+    for (const paragraph of text.split(/\r?\n/)) {
+      let remaining = paragraph.trim();
+      while (remaining.length > 21) {
+        const space = remaining.lastIndexOf(' ', 21);
+        const split = space > 0 ? space : 21;
+        lines.push(remaining.slice(0, split));
+        remaining = remaining.slice(split).trimStart();
+      }
+      lines.push(remaining);
+    }
+    const visible = lines.slice(0, 8);
+    const top = Math.floor((64 - (visible.length * 8 - 1)) / 2);
+    return [xmlBlock('disp_clear'), ...visible.map((line, index) => {
+      const block = xmlBlock('disp_text');
+      block.append(xmlField('TXT', line), xmlField('SIZE', 'small'),
+        xmlNumber('X', Math.floor((128 - Math.max(0, line.length * 6 - 1)) / 2)), xmlNumber('Y', top + index * 8));
+      return block;
+    }), xmlBlock('disp_send')];
+  }
+
   function xmlChain(nodes) {
     let first = null;
     let previous = null;
-    nodes.forEach(node => {
-      if (node.type === 'start') return;
+    for (const node of nodes) {
+      if (node.type === 'start') continue;
       xmlForNode(node).forEach(block => {
         if (!first) first = block;
         if (previous) {
@@ -966,7 +1106,8 @@
         }
         previous = block;
       });
-    });
+      if (node.type === 'forever') break;
+    }
     return first;
   }
 
@@ -1098,6 +1239,7 @@
     if (sequence) attachDrop(sequence, null);
     const builder = byId('view-builder');
     if (builder) attachCanvasDrop(builder);
+    if (byId('kidsPalette')) attachPaletteScroll(byId('kidsPalette'));
     window.addEventListener('resize', updateKidsViewport);
     window.visualViewport?.addEventListener('resize', updateKidsViewport);
     window.visualViewport?.addEventListener('scroll', updateKidsViewport);
