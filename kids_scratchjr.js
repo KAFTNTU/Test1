@@ -561,6 +561,8 @@
   function findSnapTarget(payload, event) {
     const sequence = byId('kidsSequence');
     if (!sequence) return null;
+    const draggedNodes = payload.kind === 'floating-chain' ? floatingMembers(payload.chainId) :
+      payload.kind === 'sequence' ? [findLocation(payload.id)?.node].filter(Boolean) : [];
     const scale = payload.kind === 'palette' ? kidsZoom : 1;
     const width = Number(payload.width) > 0 ? payload.width * scale : 76 * kidsZoom;
     const height = Number(payload.height) > 0 ? payload.height * scale : 66 * kidsZoom;
@@ -574,10 +576,13 @@
       ...byId('kidsWorkspaceLayer').querySelectorAll(':scope > .kids-floating-chain')
     ];
     for (const container of containers) {
+      const parentLoopId = container.classList.contains('kids-jr-loop-nest') ? container.closest('.kids-jr-loop')?.dataset.kidsId : null;
+      if (parentLoopId && draggedNodes.some(node => containsId(node, parentLoopId))) continue;
       if (container.classList.contains('kids-floating-chain') &&
           (payload.chainId === container.dataset.kidsChainId ||
            (container.children.length === 1 && container.firstElementChild?.dataset.kidsId === payload.id))) continue;
       const blocks = [...container.children].filter(child => child.classList.contains('kids-sequence-block') && child.dataset.kidsId !== payload.id);
+      if (container === sequence && !blocks.length) continue;
       const rects = blocks.map(block => block.getBoundingClientRect());
       const area = rects.length ? {
         left:Math.min(...rects.map(rect => rect.left)),
