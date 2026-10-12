@@ -1502,11 +1502,13 @@ select, option{
   .kids-sensor-dialog button[type=submit] { background:#247bc0; border-color:#247bc0; color:#fff; }
   body.rb-theme-dark .kids-sensor-dialog { background:#172437; color:#edf6ff; }
   .kids-jr-param {
+    display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; box-sizing:border-box;
     position:absolute; left:38px; bottom:-11px; transform:translateX(-50%);
     min-width:34px; height:22px; padding:0 7px; border:2px solid #cbd3dd;
     border-radius:12px; background:#fff; color:#526070; font:800 12px/1 sans-serif;
     box-shadow:0 1px 2px rgba(0,0,0,.2); cursor:pointer; z-index:8;
   }
+  .kids-jr-param.kids-line-color-param { background:#263548; color:#fff !important; border-color:#8fa3b9; }
   .kids-jr-remove {
     position:absolute; top:-5px; right:4px; width:19px; height:19px; padding:0;
     border:0; border-radius:50%; background:#475569; color:#fff; font-weight:900;
@@ -4819,7 +4821,7 @@ function a0_0x52c6(W,o){W-=348;const c=a0_0x54fe();let n=c[W];if(void 0===a0_0x5
   });
 })();
 </script>
-<script src="kids_scratchjr.js?v=20261012-kids-blocks"></script>
+<script src="kids_scratchjr.js?v=20261012-kids-labels"></script>
 
 </body>
 </html>

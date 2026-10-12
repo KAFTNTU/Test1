@@ -265,7 +265,8 @@
     }
     chip.type = 'button';
     if (node.type === 'line_color') {
-      chip.textContent = (node.param ?? def.param) === 'white' ? '⚪ Біла' : '⚫ Чорна';
+      chip.classList.add('kids-line-color-param');
+      chip.textContent = (node.param ?? def.param) === 'white' ? 'Біла' : 'Чорна';
     } else chip.textContent = String(node.param ?? def.param) + (def.suffix || '');
     chip.title = 'Натисни, щоб змінити значення';
     if (node.id) chip.addEventListener('click', event => editParam(node, event));
