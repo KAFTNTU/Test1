@@ -73,6 +73,9 @@
   let completedDrag = false;
   let normalWorkspaceBackup = null;
   let zoomCommitTimer = null;
+  let cancelTouchDrag = null;
+  let cancelProgramMove = null;
+  let cancelCanvasGesture = null;
   const undoStack = [];
   const redoStack = [];
 
@@ -220,22 +223,98 @@
     return button;
   }
 
+  function dragInfo(element, node, palette, event) {
+    const floatingChain = palette ? null : element.closest('.kids-floating-chain');
+    const dragWholeChain = floatingChain?.querySelectorAll(':scope > .kids-sequence-block').length > 1;
+    const source = dragWholeChain ? floatingChain : element;
+    const rect = source.getBoundingClientRect();
+    return {source, payload:{
+      ...(palette ? {kind:'palette', type:node.type} : dragWholeChain ? {kind:'floating-chain', chainId:floatingChain.dataset.kidsChainId} : {kind:'sequence', id:node.id}),
+      grabX:rect.width ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) : .5,
+      grabY:rect.height ? Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) : .5,
+      width:palette ? (node.type === 'start' ? 85 : 76) : rect.width,
+      height:palette ? 66 : rect.height
+    }};
+  }
+
+  function attachTouchDrag(element, node, palette) {
+    let suppressClick = false;
+    element.addEventListener('click', event => {
+      if (!suppressClick) return;
+      suppressClick = false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+    element.addEventListener('pointerdown', event => {
+      if (!kidsMode || event.pointerType === 'mouse' || event.target.closest('button')) return;
+      cancelTouchDrag?.();
+      const {source, payload} = dragInfo(element, node, palette, event);
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const pointerId = event.pointerId;
+      let ghost = null;
+      let moving = false;
+      function cleanup() {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', cancel);
+        if (element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
+        source.classList.remove('kids-touch-dragging');
+        ghost?.remove();
+        cancelTouchDrag = null;
+      }
+      function cancel() { suppressClick = moving; cleanup(); }
+      function move(next) {
+        if (next.pointerId !== pointerId) return;
+        if (!moving && Math.hypot(next.clientX - startX, next.clientY - startY) < 6) return;
+        if (!moving) {
+          moving = true;
+          element.setPointerCapture(pointerId);
+          ghost = source.cloneNode(true);
+          ghost.classList.add('kids-touch-ghost');
+          ghost.querySelectorAll('.kids-jr-remove').forEach(button => button.remove());
+          Object.assign(ghost.style, {position:'fixed', margin:'0', zIndex:'10000', pointerEvents:'none', transformOrigin:'0 0', transition:'none'});
+          if (payload.kind === 'floating-chain') {
+            Object.assign(ghost.style, {display:'flex', alignItems:'center', width:'max-content', height:'max-content'});
+            ghost.lastElementChild.style.marginRight = '0';
+          }
+          document.body.appendChild(ghost);
+          source.classList.add('kids-touch-dragging');
+        }
+        next.preventDefault();
+        const scale = payload.kind === 'palette' ? kidsZoom : 1;
+        const width = payload.width * scale;
+        const height = payload.height * scale;
+        ghost.style.transform = `scale(${kidsZoom})`;
+        ghost.style.left = next.clientX - width * payload.grabX + 'px';
+        ghost.style.top = next.clientY - height * payload.grabY + 'px';
+      }
+      function finish(next) {
+        if (next.pointerId !== pointerId) return;
+        suppressClick = moving;
+        cleanup();
+        if (!moving) return;
+        next.preventDefault();
+        const target = document.elementFromPoint(next.clientX, next.clientY);
+        const builder = byId('view-builder');
+        if (target && builder?.contains(target) && !target.closest('#kidsPaletteDock, .sensor-row'))
+          dropNearChainOrCanvas(payload, next);
+      }
+      cancelTouchDrag = cancel;
+      window.addEventListener('pointermove', move, {passive:false});
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', cancel);
+    });
+  }
+
   function attachDrag(element, node, palette) {
     element.draggable = true;
+    attachTouchDrag(element, node, palette);
     let dragPayload;
     element.addEventListener('dragstart', event => {
       event.stopPropagation();
       completedDrag = false;
-      const floatingChain = !palette && element.closest('.kids-floating-chain');
-      const dragWholeChain = floatingChain?.querySelectorAll(':scope > .kids-sequence-block').length > 1;
-      const rect = (dragWholeChain ? floatingChain : element).getBoundingClientRect();
-      dragPayload = {
-        ...(palette ? {kind:'palette', type:node.type} : dragWholeChain ? {kind:'floating-chain', chainId:floatingChain.dataset.kidsChainId} : {kind:'sequence', id:node.id}),
-        grabX:rect.width ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) : .5,
-        grabY:rect.height ? Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) : .5,
-        width:rect.width,
-        height:rect.height
-      };
+      dragPayload = dragInfo(element, node, palette, event).payload;
       event.dataTransfer.setData('text/plain', JSON.stringify(dragPayload));
       event.dataTransfer.effectAllowed = palette ? 'copyMove' : 'move';
     });
@@ -490,7 +569,7 @@
     const right = left + width;
     const bottom = top + height;
     const containers = [
-      ...sequence.querySelectorAll('.kids-jr-loop-nest'),
+      ...byId('kidsWorkspaceLayer').querySelectorAll('.kids-jr-loop-nest'),
       ...(program.length ? [sequence] : []),
       ...byId('kidsWorkspaceLayer').querySelectorAll(':scope > .kids-floating-chain')
     ];
@@ -675,14 +754,99 @@
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', finish);
       window.removeEventListener('pointercancel', finish);
+      cancelProgramMove = null;
       save();
     }
+    cancelProgramMove = finish;
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', finish);
     window.addEventListener('pointercancel', finish);
   }
 
+  function updateKidsViewport() {
+    const builder = byId('view-builder');
+    if (!builder) return;
+    builder.style.setProperty('--kids-viewport-height', (window.visualViewport?.height || innerHeight) + 'px');
+    builder.style.setProperty('--kids-viewport-top', (window.visualViewport?.offsetTop || 0) + 'px');
+    if (!kidsMode) return;
+    const first = byId('kidsSequence')?.querySelector(':scope > .kids-sequence-block');
+    if (!first) return;
+    const wasGesturing = builder.classList.contains('kids-gesturing');
+    builder.classList.add('kids-gesturing');
+    applyKidsZoom();
+    const rect = first.getBoundingClientRect();
+    const bounds = builder.getBoundingClientRect();
+    const dockTop = byId('kidsPaletteDock').getBoundingClientRect().top;
+    if (rect.right < bounds.left + 8 || rect.left > bounds.right - 8)
+      viewPan.x += bounds.left + 24 - rect.left;
+    if (rect.bottom < bounds.top + 70 || rect.top > dockTop - 16)
+      viewPan.y += bounds.top + 70 + Math.max(0, (dockTop - bounds.top - 86 - rect.height) / 2) - rect.top;
+    applyKidsZoom();
+    first.getBoundingClientRect();
+    if (!wasGesturing) builder.classList.remove('kids-gesturing');
+  }
+
+  function attachCanvasGestures(builder) {
+    const pointers = new Map();
+    let gesture = null;
+    function begin() {
+      const points = [...pointers.values()];
+      const center = points.length > 1 ? {x:(points[0].x + points[1].x) / 2, y:(points[0].y + points[1].y) / 2} : points[0];
+      const bounds = builder.getBoundingClientRect();
+      gesture = {pan:{...viewPan}, zoom:kidsZoom, center,
+        distance:points.length > 1 ? Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y) : 0,
+        world:{x:(center.x - bounds.left - viewPan.x) / kidsZoom, y:(center.y - bounds.top - viewPan.y) / kidsZoom}};
+      builder.classList.add('kids-gesturing');
+    }
+    function cleanup() {
+      for (const id of pointers.keys()) if (builder.hasPointerCapture(id)) builder.releasePointerCapture(id);
+      pointers.clear();
+      gesture = null;
+      builder.classList.remove('kids-gesturing');
+    }
+    cancelCanvasGesture = cleanup;
+    builder.addEventListener('pointerdown', event => {
+      if (!kidsMode || event.button !== 0 || event.target.closest('#kidsPaletteDock, .sensor-row, button, input')) return;
+      pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+      if (pointers.size === 1 && event.target.closest('.kids-sequence-block')) return;
+      cancelTouchDrag?.();
+      cancelProgramMove?.();
+      event.preventDefault();
+      event.stopPropagation();
+      for (const id of pointers.keys()) builder.setPointerCapture(id);
+      begin();
+    }, true);
+    window.addEventListener('pointermove', event => {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+      if (!gesture) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const points = [...pointers.values()];
+      const center = points.length > 1 ? {x:(points[0].x + points[1].x) / 2, y:(points[0].y + points[1].y) / 2} : points[0];
+      if (points.length > 1 && gesture.distance > 0) {
+        const distance = Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y);
+        kidsZoom = Math.round(Math.max(.55, Math.min(1.5, gesture.zoom * distance / gesture.distance)) * 1000) / 1000;
+        const bounds = builder.getBoundingClientRect();
+        viewPan = {x:center.x - bounds.left - gesture.world.x * kidsZoom, y:center.y - bounds.top - gesture.world.y * kidsZoom};
+      } else viewPan = {x:gesture.pan.x + center.x - gesture.center.x, y:gesture.pan.y + center.y - gesture.center.y};
+      applyKidsZoom();
+    }, {capture:true, passive:false});
+    function finish(event) {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.delete(event.pointerId);
+      if (builder.hasPointerCapture(event.pointerId)) builder.releasePointerCapture(event.pointerId);
+      if (!gesture) return;
+      event.stopPropagation();
+      if (pointers.size) begin();
+      else { cleanup(); save(); }
+    }
+    window.addEventListener('pointerup', finish, true);
+    window.addEventListener('pointercancel', finish, true);
+  }
+
   function attachCanvasDrop(builder) {
+    attachCanvasGestures(builder);
     builder.addEventListener('wheel', event => {
       if (!kidsMode || event.target.closest('#kidsPaletteDock, .sensor-row, input')) return;
       event.preventDefault();
@@ -855,6 +1019,10 @@
   }
 
   function restoreDock() {
+    cancelTouchDrag?.();
+    cancelProgramMove?.();
+    cancelCanvasGesture?.();
+    document.body.classList.remove('rb-kids-editor');
     const dock = byId('kidsPaletteDock');
     const sequence = byId('kidsSequence');
     const home = byId('view-kids');
@@ -880,6 +1048,7 @@
 
   window.openKidsMode = function (button) {
     kidsMode = true;
+    document.body.classList.add('rb-kids-editor');
     updateButton();
     const builder = byId('view-builder');
     if (builder) {
@@ -902,6 +1071,7 @@
     showView('view-builder', button);
     renderPalette();
     renderSequence();
+    updateKidsViewport();
   };
 
   window.closeKidsMode = function () {
@@ -923,6 +1093,10 @@
     if (sequence) attachDrop(sequence, null);
     const builder = byId('view-builder');
     if (builder) attachCanvasDrop(builder);
+    window.addEventListener('resize', updateKidsViewport);
+    window.visualViewport?.addEventListener('resize', updateKidsViewport);
+    window.visualViewport?.addEventListener('scroll', updateKidsViewport);
+    updateKidsViewport();
     const runButton = byId('globalRunBtn');
     if (runButton) runButton.addEventListener('click', event => {
       if (!kidsMode) return;

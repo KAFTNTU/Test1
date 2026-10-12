@@ -1372,8 +1372,14 @@ select, option{
     position:fixed !important;
     inset:0 !important;
     height:100vh !important;
+    height:var(--kids-viewport-height, 100dvh) !important;
+    top:var(--kids-viewport-top, 0px) !important;
+    bottom:auto !important;
+    overflow:hidden;
+    touch-action:auto;
     transform:none !important;
   }
+  body.rb-kids-editor { touch-action:auto; }
   #view-builder.kids-canvas-mode .blocklyToolboxDiv,
   #view-builder.kids-canvas-mode .blocklyFlyout,
   #view-builder.kids-canvas-mode #flyoutNavBtns {
@@ -1382,6 +1388,7 @@ select, option{
   #view-builder.kids-canvas-mode #blocklyDiv {
     width:100% !important;
     height:100% !important;
+    touch-action:none;
   }
 </style>
 <link rel="stylesheet" href="kids_scratchjr_assets.css">
@@ -1399,6 +1406,10 @@ select, option{
     position:absolute; inset:0; z-index:75; overflow:visible; pointer-events:none;
     transform-origin:0 0; transition:transform .16s ease-out;
   }
+  #view-builder.kids-gesturing #kidsWorkspaceLayer,
+  #view-builder.kids-gesturing #kidsGridLayer { transition:none; }
+  .kids-touch-ghost { pointer-events:none !important; transition:none !important; }
+  .kids-touch-dragging { opacity:.35; }
   #view-builder.kids-canvas-mode > .sensor-row { z-index:90; }
   #view-builder.kids-canvas-mode #kidsWorkspaceLayer > #kidsSequence {
     left:40px;
@@ -1506,11 +1517,23 @@ select, option{
   .kids-jr-loop-empty { width:60px; height:60px; margin-right:6px; border:3px dashed rgba(255,255,255,.75); border-radius:14px; color:#fff; display:grid; place-items:center; font-size:24px; }
   body.rb-theme-dark #view-builder.kids-canvas-mode #kidsPaletteDock { background:rgba(20,34,54,.1); border-color:rgba(146,181,214,.2); }
   body.rb-theme-dark .kids-dock-actions button { background:#f8fafc; color:#243447; }
-  @media (max-width:700px) {
-    .kids-dock-top { justify-content:flex-start; overflow-x:auto; }
-    .kids-category-tabs { flex:1 1 auto; min-width:0; overflow-x:auto; overflow-y:hidden; }
-    .kids-category-tab { min-width:42px; width:42px; height:42px; font-size:20px; }
-    .kids-dock-actions button { padding:0 8px; }
+  @media (max-width:700px), (pointer:coarse) and (max-height:600px) {
+    #view-builder.kids-canvas-mode #kidsPaletteDock {
+      width:calc(100% - 16px);
+      bottom:calc(8px + env(safe-area-inset-bottom, 0px));
+      padding:7px 8px 6px;
+    }
+    .kids-dock-top { justify-content:safe center; gap:8px; min-height:40px; overflow-x:auto; touch-action:pan-x; }
+    .kids-category-tabs { flex:0 0 auto; min-width:0; gap:5px; }
+    .kids-category-tab { min-width:31.5px; width:31.5px; height:31.5px; border-radius:9px; font-size:15px; }
+    .kids-dock-actions { gap:5px; }
+    .kids-dock-actions button { min-height:31.5px; padding:0 6px; border-radius:8px; }
+    .kids-dock-actions .kids-history-btn { min-width:31.5px; font-size:20px; }
+    #kidsActiveLoopHint { font-size:10px; }
+    #kidsPalette { min-height:63px; gap:13.5px; padding:6px 9px 10.5px; touch-action:pan-x; }
+    #kidsPalette > .kids-jr-block { width:57px; height:49.5px; flex-basis:57px; touch-action:pan-x; }
+    #kidsPalette > .kids-jr-block.wide { width:63.75px; flex-basis:63.75px; }
+    #kidsPalette .kids-jr-param { left:28.5px; bottom:-8.25px; min-width:25.5px; height:16.5px; padding:0 5.25px; border-width:1.5px; font-size:9px; }
     #view-builder.kids-canvas-mode #kidsWorkspaceLayer > #kidsSequence { max-width:calc(100% - 20px); }
   }
 </style>
