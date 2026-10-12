@@ -7,6 +7,7 @@
   const ZOOM_KEY = 'rb_kids_scratchjr_zoom_v1';
   const PAN_KEY = 'rb_kids_scratchjr_pan_v1';
   const IS_DEMO = new URLSearchParams(location.search).has('kids-demo');
+  const IS_EMPTY_DEMO = IS_DEMO && new URLSearchParams(location.search).has('kids-empty');
   const defs = {
     start:       {category:'start', shape:'start', ico:'flag', title:'Почати програму'},
     forward:     {category:'move', shape:'blue', ico:'forward', title:'Їхати вперед', param:2, suffix:'с'},
@@ -45,7 +46,7 @@
     {id:'sample-say', type:'say', param:'HI'},
     {id:'sample-end', type:'end'}
   ];
-  let program = sample;
+  let program = IS_EMPTY_DEMO ? [] : sample;
   let floatingBlocks = [];
   let programPosition = {x:40, y:Math.max(100, Math.round(innerHeight / 2 - 40))};
   let kidsZoom = 1;
@@ -225,9 +226,11 @@
     element.addEventListener('dragstart', event => {
       event.stopPropagation();
       completedDrag = false;
-      const rect = element.getBoundingClientRect();
+      const floatingChain = !palette && element.closest('.kids-floating-chain');
+      const dragWholeChain = floatingChain?.querySelectorAll(':scope > .kids-sequence-block').length > 1;
+      const rect = (dragWholeChain ? floatingChain : element).getBoundingClientRect();
       dragPayload = {
-        ...(palette ? {kind:'palette', type:node.type} : {kind:'sequence', id:node.id}),
+        ...(palette ? {kind:'palette', type:node.type} : dragWholeChain ? {kind:'floating-chain', chainId:floatingChain.dataset.kidsChainId} : {kind:'sequence', id:node.id}),
         grabX:rect.width ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) : .5,
         grabY:rect.height ? Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) : .5,
         width:rect.width,
@@ -246,8 +249,7 @@
         const nest = target.closest('.kids-jr-loop-nest');
         const container = nest || sequence;
         const loopId = nest?.closest('.kids-jr-loop')?.dataset.kidsId || null;
-        if (palette) insertPaletteBlock(node.type, container, loopId, target, event.clientX);
-        else moveNodeIntoList(node.id, container, loopId, target, event.clientX);
+        insertPayloadIntoList(dragPayload, container, loopId, target, event.clientX);
       } else dropNearChainOrCanvas(dragPayload || (palette ? {kind:'palette', type:node.type} : {kind:'sequence', id:node.id}), event);
     });
   }
@@ -338,12 +340,8 @@
     const sequence = byId('kidsSequence');
     if (!sequence) return;
     sequence.replaceChildren();
-    if (!program.length) {
-      const empty = document.createElement('div');
-      empty.className = 'kids-sequence-empty';
-      empty.textContent = 'Перетягни блок знизу на полотно';
-      sequence.appendChild(empty);
-    } else program.forEach((node, index) => {
+    sequence.classList.toggle('kids-empty', !program.length);
+    program.forEach((node, index) => {
       const block = makeProgramBlock(node);
       block.style.setProperty('--chain-layer', String(program.length - index + 1));
       sequence.appendChild(block);
@@ -382,19 +380,85 @@
     return Math.max(0, Math.min(list.length, index));
   }
 
+  const floatingChainId = node => node.chainId || node.id;
+  const floatingMembers = chainId => floatingBlocks.filter(node => floatingChainId(node) === chainId);
+
+  function targetIndex(list, container, target, clientX) {
+    const block = target?.closest('.kids-sequence-block');
+    if (!block || block.parentElement !== container) return list.length;
+    const index = list.findIndex(node => node.id === block.dataset.kidsId);
+    if (index < 0) return list.length;
+    const rect = block.getBoundingClientRect();
+    return index + (clientX > rect.left + rect.width / 2 ? 1 : 0);
+  }
+
+  function clearFloatingPosition(node) {
+    delete node.chainId;
+    delete node.x;
+    delete node.y;
+  }
+
+  function insertPayloadIntoList(payload, container, loopId, target, clientX, snapIndex) {
+    if (payload.kind === 'palette' && defs[payload.type]) {
+      insertPaletteBlock(payload.type, container, loopId, target, clientX, snapIndex);
+    } else if (payload.kind === 'sequence') {
+      moveNodeIntoList(payload.id, container, loopId, target, clientX, snapIndex);
+    } else if (payload.kind === 'floating-chain') {
+      const nodes = floatingMembers(payload.chainId);
+      if (!nodes.length || (loopId && nodes.some(node => containsId(node, loopId)))) return;
+      const list = listForLoop(loopId);
+      const index = Number.isInteger(snapIndex) ? snapIndex : targetIndex(list, container, target, clientX);
+      floatingBlocks = floatingBlocks.filter(node => floatingChainId(node) !== payload.chainId);
+      nodes.forEach(clearFloatingPosition);
+      list.splice(constrainedIndex(list, index, nodes[0].type), 0, ...nodes);
+      save();
+      renderSequence();
+    }
+  }
+
+  function insertPayloadIntoFloating(payload, container, target, clientX, snapIndex) {
+    const chainId = container.dataset.kidsChainId;
+    let members = floatingMembers(chainId);
+    if (!members.length || (payload.kind === 'floating-chain' && payload.chainId === chainId)) return;
+    let index = Number.isInteger(snapIndex) ? snapIndex : targetIndex(members, container, target, clientX);
+    let nodes;
+    if (payload.kind === 'palette' && defs[payload.type]) nodes = [newNode(payload.type)];
+    else if (payload.kind === 'floating-chain') {
+      nodes = floatingMembers(payload.chainId);
+      if (!nodes.length) return;
+      floatingBlocks = floatingBlocks.filter(node => floatingChainId(node) !== payload.chainId);
+    } else if (payload.kind === 'sequence') {
+      const location = findLocation(payload.id);
+      if (!location || members.some(member => member.id !== location.node.id && containsId(location.node, member.id))) return;
+      if (!Number.isInteger(snapIndex) && location.list === floatingBlocks &&
+          floatingChainId(location.node) === chainId && members.indexOf(location.node) < index) index--;
+      nodes = [location.list.splice(location.index, 1)[0]];
+      if (activeLoopId && containsId(nodes[0], activeLoopId)) activeLoopId = location.parentId;
+    } else return;
+    members = floatingMembers(chainId);
+    if (!members.length) {
+      const anchor = nodes[0];
+      nodes.forEach(node => { node.chainId = chainId; node.x = anchor.x; node.y = anchor.y; });
+      floatingBlocks.push(...nodes);
+    } else {
+      const anchor = members[0];
+      index = Math.max(0, Math.min(members.length, index));
+      if (members[0].type === 'start' && nodes[0].type !== 'start') index = Math.max(1, index);
+      if (members[members.length - 1].type === 'end' && nodes[0].type !== 'end') index = Math.min(members.length - 1, index);
+      const before = members[index];
+      const at = before ? floatingBlocks.indexOf(before) : floatingBlocks.indexOf(members[members.length - 1]) + 1;
+      nodes.forEach(node => { node.chainId = chainId; node.x = anchor.x; node.y = anchor.y; });
+      floatingBlocks.splice(at, 0, ...nodes);
+    }
+    save();
+    renderSequence();
+  }
+
   function insertPaletteBlock(type, container, loopId, target, clientX, snapIndex) {
     if (!defs[type]) return;
     if (type === 'start' || type === 'end') { addBlock(type); return; }
     const list = listForLoop(loopId);
-    let index = Number.isInteger(snapIndex) ? snapIndex : list.length;
-    if (!Number.isInteger(snapIndex)) {
-      const targetBlock = target?.closest('.kids-sequence-block');
-      if (targetBlock && targetBlock.parentElement === container) {
-        index = list.findIndex(node => node.id === targetBlock.dataset.kidsId);
-        if (index < 0) index = list.length;
-        else if (clientX > targetBlock.getBoundingClientRect().left + targetBlock.getBoundingClientRect().width / 2) index++;
-      }
-    }
+    const index = Number.isInteger(snapIndex) ? snapIndex : targetIndex(list, container, target, clientX);
     const node = newNode(type);
     list.splice(constrainedIndex(list, index, type), 0, node);
     if (defs[type].container) activeLoopId = node.id;
@@ -404,19 +468,12 @@
 
   function moveNodeIntoList(id, container, loopId, target, clientX, snapIndex) {
     const list = listForLoop(loopId);
-    let index = Number.isInteger(snapIndex) ? snapIndex : list.length;
-    if (!Number.isInteger(snapIndex)) {
-      const targetBlock = target?.closest('.kids-sequence-block');
-      if (targetBlock && targetBlock.parentElement === container) {
-        index = list.findIndex(node => node.id === targetBlock.dataset.kidsId);
-        if (index < 0) index = list.length;
-        else if (clientX > targetBlock.getBoundingClientRect().left + targetBlock.getBoundingClientRect().width / 2) index++;
-      }
-    }
+    let index = Number.isInteger(snapIndex) ? snapIndex : targetIndex(list, container, target, clientX);
     const location = findLocation(id);
     if (!location || (loopId && containsId(location.node, loopId))) return;
     const moved = location.list.splice(location.index, 1)[0];
     if (!Number.isInteger(snapIndex) && location.list === list && location.index < index) index--;
+    clearFloatingPosition(moved);
     list.splice(constrainedIndex(list, index, moved.type), 0, moved);
     save();
     renderSequence();
@@ -432,8 +489,15 @@
     const top = event.clientY - height * (Number.isFinite(payload.grabY) ? payload.grabY : .5);
     const right = left + width;
     const bottom = top + height;
-    const containers = [...sequence.querySelectorAll('.kids-jr-loop-nest'), sequence];
+    const containers = [
+      ...sequence.querySelectorAll('.kids-jr-loop-nest'),
+      ...(program.length ? [sequence] : []),
+      ...byId('kidsWorkspaceLayer').querySelectorAll(':scope > .kids-floating-chain')
+    ];
     for (const container of containers) {
+      if (container.classList.contains('kids-floating-chain') &&
+          (payload.chainId === container.dataset.kidsChainId ||
+           (container.children.length === 1 && container.firstElementChild?.dataset.kidsId === payload.id))) continue;
       const blocks = [...container.children].filter(child => child.classList.contains('kids-sequence-block') && child.dataset.kidsId !== payload.id);
       const rects = blocks.map(block => block.getBoundingClientRect());
       const area = rects.length ? {
@@ -448,7 +512,7 @@
       const index = blocks.findIndex((block, i) => left + 11 * kidsZoom < rects[i].left + rects[i].width / 2);
       return {
         container,
-        loopId:container === sequence ? null : container.closest('.kids-jr-loop')?.dataset.kidsId || null,
+        loopId:container.classList.contains('kids-floating-chain') || container === sequence ? null : container.closest('.kids-jr-loop')?.dataset.kidsId || null,
         index:index < 0 ? blocks.length : index
       };
     }
@@ -458,14 +522,10 @@
   function dropNearChainOrCanvas(payload, event) {
     const snap = findSnapTarget(payload, event);
     if (snap) {
-      if (payload.kind === 'palette' && defs[payload.type]) {
-        insertPaletteBlock(payload.type, snap.container, snap.loopId, null, event.clientX, snap.index);
-        return;
-      }
-      if (payload.kind === 'sequence') {
-        moveNodeIntoList(payload.id, snap.container, snap.loopId, null, event.clientX, snap.index);
-        return;
-      }
+      if (snap.container.classList.contains('kids-floating-chain'))
+        insertPayloadIntoFloating(payload, snap.container, null, event.clientX, snap.index);
+      else insertPayloadIntoList(payload, snap.container, snap.loopId, null, event.clientX, snap.index);
+      return;
     }
     placeBlockOnCanvas(payload, event);
   }
@@ -478,15 +538,13 @@
       let payload;
       try { payload = JSON.parse(event.dataTransfer.getData('text/plain')); } catch (_) { return; }
       completedDrag = true;
-      if (payload.kind === 'palette' && defs[payload.type]) {
-        insertPaletteBlock(payload.type, container, loopId, event.target, event.clientX);
-      } else if (payload.kind === 'sequence') {
-        moveNodeIntoList(payload.id, container, loopId, event.target, event.clientX);
-      }
+      if (container.classList.contains('kids-floating-chain'))
+        insertPayloadIntoFloating(payload, container, event.target, event.clientX);
+      else insertPayloadIntoList(payload, container, loopId, event.target, event.clientX);
     });
   }
 
-  function getDropPosition(event, width = 76) {
+  function getDropPosition(event, width = 76, height = 66, grabX = .5, grabY = .5) {
     const builder = byId('view-builder');
     const dock = byId('kidsPaletteDock');
     const bounds = builder.getBoundingClientRect();
@@ -494,17 +552,53 @@
     const left = (8 - viewPan.x) / kidsZoom;
     const right = (bounds.width - 8 - viewPan.x) / kidsZoom - width;
     const top = (70 - viewPan.y) / kidsZoom;
-    const bottom = (dockTop - bounds.top - 10 - viewPan.y) / kidsZoom - 66;
+    const bottom = (dockTop - bounds.top - 10 - viewPan.y) / kidsZoom - height;
     return {
-      x:Math.round(Math.max(left, Math.min(Math.max(left, right), (event.clientX - bounds.left - viewPan.x) / kidsZoom - width / 2))),
-      y:Math.round(Math.max(top, Math.min(Math.max(top, bottom), (event.clientY - bounds.top - viewPan.y) / kidsZoom - 33)))
+      x:Math.round(Math.max(left, Math.min(Math.max(left, right), (event.clientX - bounds.left - viewPan.x) / kidsZoom - width * grabX))),
+      y:Math.round(Math.max(top, Math.min(Math.max(top, bottom), (event.clientY - bounds.top - viewPan.y) / kidsZoom - height * grabY)))
     };
   }
 
   function placeBlockOnCanvas(payload, event) {
-    const point = getDropPosition(event);
+    const width = payload.kind === 'palette' ? Number(payload.width) || 76 : (Number(payload.width) || 76 * kidsZoom) / kidsZoom;
+    const height = payload.kind === 'palette' ? Number(payload.height) || 66 : (Number(payload.height) || 66 * kidsZoom) / kidsZoom;
+    const point = getDropPosition(event, width, height,
+      Number.isFinite(payload.grabX) ? payload.grabX : .5,
+      Number.isFinite(payload.grabY) ? payload.grabY : .5);
+    if (!program.length) {
+      let nodes;
+      if (payload.kind === 'palette' && defs[payload.type]) nodes = [newNode(payload.type)];
+      else if (payload.kind === 'floating-chain') {
+        nodes = floatingMembers(payload.chainId);
+        floatingBlocks = floatingBlocks.filter(node => floatingChainId(node) !== payload.chainId);
+      } else if (payload.kind === 'sequence') {
+        const location = findLocation(payload.id);
+        if (!location) return;
+        nodes = [location.list.splice(location.index, 1)[0]];
+      }
+      if (!nodes?.length) return;
+      nodes.forEach(clearFloatingPosition);
+      program.push(...nodes);
+      programPosition = {x:point.x - 16, y:point.y - 14};
+      renderSequence();
+      const first = byId('kidsSequence')?.querySelector(':scope > .kids-sequence-block');
+      if (first) {
+        const bounds = byId('view-builder').getBoundingClientRect();
+        const rect = first.getBoundingClientRect();
+        programPosition.x += (bounds.left + viewPan.x + point.x * kidsZoom - rect.left) / kidsZoom;
+        programPosition.y += (bounds.top + viewPan.y + point.y * kidsZoom - rect.top) / kidsZoom;
+        applyProgramPosition();
+      }
+      save();
+      return;
+    }
     if (payload.kind === 'palette' && defs[payload.type]) {
-      floatingBlocks.push({...newNode(payload.type), ...point});
+      const node = newNode(payload.type);
+      floatingBlocks.push({...node, chainId:node.id, ...point});
+    } else if (payload.kind === 'floating-chain') {
+      const nodes = floatingMembers(payload.chainId);
+      if (!nodes.length) return;
+      nodes.forEach(node => { node.x = point.x; node.y = point.y; });
     } else if (payload.kind === 'sequence') {
       const location = findLocation(payload.id);
       if (!location) return;
@@ -512,6 +606,7 @@
       if (activeLoopId && containsId(node, activeLoopId)) activeLoopId = location.parentId;
       node.x = point.x;
       node.y = point.y;
+      node.chainId = node.id;
       floatingBlocks.push(node);
     } else return;
     save();
@@ -523,14 +618,25 @@
     if (!layer) return;
     layer.querySelectorAll(':scope > .kids-floating-block').forEach(element => element.remove());
     if (!kidsMode) return;
+    const chains = new Map();
     floatingBlocks.forEach(node => {
+      const chainId = floatingChainId(node);
+      if (!chains.has(chainId)) chains.set(chainId, []);
+      chains.get(chainId).push(node);
+    });
+    chains.forEach((nodes, chainId) => {
       const wrapper = document.createElement('div');
-      wrapper.className = 'kids-floating-block';
-      wrapper.style.left = node.x + 'px';
-      wrapper.style.top = node.y + 'px';
-      wrapper.dataset.kidsId = node.id;
-      wrapper.title = 'Під’єднай до ланцюжка, щоб блок виконувався';
-      wrapper.appendChild(makeProgramBlock(node));
+      wrapper.className = 'kids-floating-block kids-floating-chain';
+      wrapper.style.left = nodes[0].x + 'px';
+      wrapper.style.top = nodes[0].y + 'px';
+      wrapper.dataset.kidsChainId = chainId;
+      wrapper.title = 'З’єднуй блоки тут або приєднай ряд до програми';
+      nodes.forEach((node, index) => {
+        const block = makeProgramBlock(node);
+        block.style.setProperty('--chain-layer', String(nodes.length - index + 1));
+        wrapper.appendChild(block);
+      });
+      attachDrop(wrapper, null);
       layer.appendChild(wrapper);
     });
   }

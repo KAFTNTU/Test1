@@ -1414,6 +1414,10 @@ select, option{
     overflow: visible;
     pointer-events:auto;
   }
+  #view-builder.kids-canvas-mode #kidsWorkspaceLayer > #kidsSequence.kids-empty {
+    visibility:hidden;
+    pointer-events:none;
+  }
   #view-builder.kids-canvas-mode #kidsPaletteDock {
     bottom: 10px;
     padding: 10px 18px 12px;
@@ -1428,12 +1432,13 @@ select, option{
   .kids-chain-anchor { cursor:grab; }
   .kids-chain-anchor:active { cursor:grabbing; }
   #view-builder.kids-canvas-mode #kidsWorkspaceLayer > .kids-floating-block {
-    position:absolute; z-index:76; width:max-content; height:max-content;
-    min-width:76px; min-height:66px;
+    position:absolute; z-index:76; display:flex; align-items:center;
+    width:max-content; height:max-content;
     pointer-events:auto;
   }
   #view-builder.kids-canvas-mode #kidsWorkspaceLayer > .kids-floating-block > .kids-jr-block,
-  #view-builder.kids-canvas-mode #kidsWorkspaceLayer > .kids-floating-block > .kids-jr-loop { margin-right:0; }
+  #view-builder.kids-canvas-mode #kidsWorkspaceLayer > .kids-floating-block > .kids-jr-loop { margin-right:-11px; }
+  #view-builder.kids-canvas-mode #kidsWorkspaceLayer > .kids-floating-block > :last-child { margin-right:0; }
   .kids-dock-top { display:flex; align-items:center; justify-content:center; gap:14px; min-height:54px; }
   .kids-category-tabs { margin:0; gap:7px; flex:0 0 auto; flex-wrap:nowrap; overflow:visible; }
   .kids-category-tab {
@@ -1687,7 +1692,6 @@ select, option{
                 <div id="kidsStage" class="kids-stage">
                     <div class="kids-stage-caption">Твоя програма</div>
                     <div id="kidsSequence" class="kids-sequence" aria-label="Горизонтальна програма">
-                        <div id="kidsSequenceEmpty" class="kids-sequence-empty">Перетягни блок знизу на полотно</div>
                     </div>
                 </div>
 
