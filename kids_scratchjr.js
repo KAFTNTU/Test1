@@ -221,10 +221,19 @@
 
   function attachDrag(element, node, palette) {
     element.draggable = true;
+    let dragPayload;
     element.addEventListener('dragstart', event => {
       event.stopPropagation();
       completedDrag = false;
-      event.dataTransfer.setData('text/plain', JSON.stringify(palette ? {kind:'palette', type:node.type} : {kind:'sequence', id:node.id}));
+      const rect = element.getBoundingClientRect();
+      dragPayload = {
+        ...(palette ? {kind:'palette', type:node.type} : {kind:'sequence', id:node.id}),
+        grabX:rect.width ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) : .5,
+        grabY:rect.height ? Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) : .5,
+        width:rect.width,
+        height:rect.height
+      };
+      event.dataTransfer.setData('text/plain', JSON.stringify(dragPayload));
       event.dataTransfer.effectAllowed = palette ? 'copyMove' : 'move';
     });
     element.addEventListener('dragend', event => {
@@ -239,7 +248,7 @@
         const loopId = nest?.closest('.kids-jr-loop')?.dataset.kidsId || null;
         if (palette) insertPaletteBlock(node.type, container, loopId, target, event.clientX);
         else moveNodeIntoList(node.id, container, loopId, target, event.clientX);
-      } else placeBlockOnCanvas(palette ? {kind:'palette', type:node.type} : {kind:'sequence', id:node.id}, event);
+      } else dropNearChainOrCanvas(dragPayload || (palette ? {kind:'palette', type:node.type} : {kind:'sequence', id:node.id}), event);
     });
   }
 
@@ -366,40 +375,99 @@
     renderSequence();
   }
 
-  function insertPaletteBlock(type, container, loopId, target, clientX) {
+  function constrainedIndex(list, index, type) {
+    if (list !== program) return Math.max(0, Math.min(list.length, index));
+    if (type !== 'start' && list[0]?.type === 'start') index = Math.max(1, index);
+    if (type !== 'end' && list[list.length - 1]?.type === 'end') index = Math.min(list.length - 1, index);
+    return Math.max(0, Math.min(list.length, index));
+  }
+
+  function insertPaletteBlock(type, container, loopId, target, clientX, snapIndex) {
     if (!defs[type]) return;
     if (type === 'start' || type === 'end') { addBlock(type); return; }
     const list = listForLoop(loopId);
-    let index = list.length;
-    const targetBlock = target.closest('.kids-sequence-block');
-    if (targetBlock && targetBlock.parentElement === container) {
-      index = list.findIndex(node => node.id === targetBlock.dataset.kidsId);
-      if (index < 0) index = list.length;
-      else if (clientX > targetBlock.getBoundingClientRect().left + targetBlock.getBoundingClientRect().width / 2) index++;
+    let index = Number.isInteger(snapIndex) ? snapIndex : list.length;
+    if (!Number.isInteger(snapIndex)) {
+      const targetBlock = target?.closest('.kids-sequence-block');
+      if (targetBlock && targetBlock.parentElement === container) {
+        index = list.findIndex(node => node.id === targetBlock.dataset.kidsId);
+        if (index < 0) index = list.length;
+        else if (clientX > targetBlock.getBoundingClientRect().left + targetBlock.getBoundingClientRect().width / 2) index++;
+      }
     }
     const node = newNode(type);
-    list.splice(index, 0, node);
+    list.splice(constrainedIndex(list, index, type), 0, node);
     if (defs[type].container) activeLoopId = node.id;
     save();
     renderSequence();
   }
 
-  function moveNodeIntoList(id, container, loopId, target, clientX) {
+  function moveNodeIntoList(id, container, loopId, target, clientX, snapIndex) {
     const list = listForLoop(loopId);
-    let index = list.length;
-    const targetBlock = target.closest('.kids-sequence-block');
-    if (targetBlock && targetBlock.parentElement === container) {
-      index = list.findIndex(node => node.id === targetBlock.dataset.kidsId);
-      if (index < 0) index = list.length;
-      else if (clientX > targetBlock.getBoundingClientRect().left + targetBlock.getBoundingClientRect().width / 2) index++;
+    let index = Number.isInteger(snapIndex) ? snapIndex : list.length;
+    if (!Number.isInteger(snapIndex)) {
+      const targetBlock = target?.closest('.kids-sequence-block');
+      if (targetBlock && targetBlock.parentElement === container) {
+        index = list.findIndex(node => node.id === targetBlock.dataset.kidsId);
+        if (index < 0) index = list.length;
+        else if (clientX > targetBlock.getBoundingClientRect().left + targetBlock.getBoundingClientRect().width / 2) index++;
+      }
     }
     const location = findLocation(id);
     if (!location || (loopId && containsId(location.node, loopId))) return;
     const moved = location.list.splice(location.index, 1)[0];
-    if (location.list === list && location.index < index) index--;
-    list.splice(Math.max(0, index), 0, moved);
+    if (!Number.isInteger(snapIndex) && location.list === list && location.index < index) index--;
+    list.splice(constrainedIndex(list, index, moved.type), 0, moved);
     save();
     renderSequence();
+  }
+
+  function findSnapTarget(payload, event) {
+    const sequence = byId('kidsSequence');
+    if (!sequence) return null;
+    const scale = payload.kind === 'palette' ? kidsZoom : 1;
+    const width = Number(payload.width) > 0 ? payload.width * scale : 76 * kidsZoom;
+    const height = Number(payload.height) > 0 ? payload.height * scale : 66 * kidsZoom;
+    const left = event.clientX - width * (Number.isFinite(payload.grabX) ? payload.grabX : .5);
+    const top = event.clientY - height * (Number.isFinite(payload.grabY) ? payload.grabY : .5);
+    const right = left + width;
+    const bottom = top + height;
+    const containers = [...sequence.querySelectorAll('.kids-jr-loop-nest'), sequence];
+    for (const container of containers) {
+      const blocks = [...container.children].filter(child => child.classList.contains('kids-sequence-block') && child.dataset.kidsId !== payload.id);
+      const rects = blocks.map(block => block.getBoundingClientRect());
+      const area = rects.length ? {
+        left:Math.min(...rects.map(rect => rect.left)),
+        right:Math.max(...rects.map(rect => rect.right)),
+        top:Math.min(...rects.map(rect => rect.top)),
+        bottom:Math.max(...rects.map(rect => rect.bottom))
+      } : container.getBoundingClientRect();
+      const tolerance = 22 * kidsZoom;
+      if (right < area.left - tolerance || left > area.right + tolerance ||
+          bottom < area.top - tolerance || top > area.bottom + tolerance) continue;
+      const index = blocks.findIndex((block, i) => left + 11 * kidsZoom < rects[i].left + rects[i].width / 2);
+      return {
+        container,
+        loopId:container === sequence ? null : container.closest('.kids-jr-loop')?.dataset.kidsId || null,
+        index:index < 0 ? blocks.length : index
+      };
+    }
+    return null;
+  }
+
+  function dropNearChainOrCanvas(payload, event) {
+    const snap = findSnapTarget(payload, event);
+    if (snap) {
+      if (payload.kind === 'palette' && defs[payload.type]) {
+        insertPaletteBlock(payload.type, snap.container, snap.loopId, null, event.clientX, snap.index);
+        return;
+      }
+      if (payload.kind === 'sequence') {
+        moveNodeIntoList(payload.id, snap.container, snap.loopId, null, event.clientX, snap.index);
+        return;
+      }
+    }
+    placeBlockOnCanvas(payload, event);
   }
 
   function attachDrop(container, loopId) {
@@ -407,7 +475,6 @@
     container.addEventListener('drop', event => {
       event.preventDefault();
       event.stopPropagation();
-      byId('view-builder')?.classList.remove('kids-drop-ready');
       let payload;
       try { payload = JSON.parse(event.dataTransfer.getData('text/plain')); } catch (_) { return; }
       completedDrag = true;
@@ -532,21 +599,15 @@
       if (!kidsMode || event.target.closest('#kidsPaletteDock')) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
-      builder.classList.add('kids-drop-ready');
-    });
-    builder.addEventListener('dragleave', event => {
-      if (!builder.contains(event.relatedTarget)) builder.classList.remove('kids-drop-ready');
     });
     builder.addEventListener('drop', event => {
-      builder.classList.remove('kids-drop-ready');
       if (!kidsMode || event.target.closest('#kidsPaletteDock, #kidsSequence')) return;
       event.preventDefault();
       let payload;
       try { payload = JSON.parse(event.dataTransfer.getData('text/plain')); } catch (_) { return; }
       completedDrag = true;
-      placeBlockOnCanvas(payload, event);
+      dropNearChainOrCanvas(payload, event);
     });
-    builder.addEventListener('dragend', () => builder.classList.remove('kids-drop-ready'));
   }
 
   function xmlNumber(name, value) {
